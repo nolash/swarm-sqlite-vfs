@@ -17,7 +17,20 @@ int bzzClose(sqlite3_file *file) {
 }
 
 int bzzRead(sqlite3_file *file, void *p, int iAmt, sqlite3_int64 iOfst) {
-	fprintf(stderr, "read!\n");
+	fprintf(stderr, "read %d offset %d!\n", iAmt, iOfst);
+#ifndef TEST_HELLO
+	long long int c;
+	bzzFile *bf;
+       
+	bf = (bzzFile*)file;
+	c = GoBzzRead(bf->fd, p, iAmt, iOfst);
+	fprintf(stderr, "read return %d\n", c);
+	if (c < 0) {
+		return SQLITE_IOERR;
+	} else if (c < iAmt) {
+		return SQLITE_IOERR_SHORT_READ;
+	}
+#endif
 	return SQLITE_OK;
 }
 
@@ -38,6 +51,14 @@ int bzzSync(sqlite3_file *file, int flags) {
 
 int bzzFileSize(sqlite3_file *file, sqlite3_int64 *o_size) {
 	fprintf(stderr, "fsize!\n");
+#ifndef TEST_HELLO
+	bzzFile *bf = (bzzFile*)file;
+	long long int s = GoBzzFileSize(bf->fd);
+	if (s < 0) {
+		return SQLITE_NOTFOUND;
+	}
+	*o_size = (sqlite3_int64)s;
+#endif
 	return SQLITE_OK;
 }
 
@@ -57,7 +78,7 @@ int bzzCheckReservedLock(sqlite3_file *file, int *o_res) {
 }
 
 int bzzFileControl(sqlite3_file *file, int op, void *o_arg) {
-	fprintf(stderr, "fctrl!\n");
+	fprintf(stderr, "fctrl %d!\n", op);
 	return SQLITE_OK;
 }
 
@@ -126,6 +147,13 @@ int bzzOpen(sqlite3_vfs *vfs, const char *zName, sqlite3_file *file, int flags, 
 	};
 	bzzFile *bf = (bzzFile*)file;
 	memset(bf, 0, sizeof(bzzFile));
+#ifndef TEST_HELLO
+	char name[strlen(zName)+1];
+	strcpy(name, zName);
+	if (GoBzzOpen(name, &bf->fd) > 0) {
+		return SQLITE_NOTFOUND;	
+	}
+#endif
 	bf->base.pMethods = &bzzIO;
 	return SQLITE_OK;
 }

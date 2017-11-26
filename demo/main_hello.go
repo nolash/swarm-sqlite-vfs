@@ -6,9 +6,10 @@ import (
 	"os"
 	"sync"
 
-	"./hello"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/swarm/storage"
+
+	"./hello"
 )
 
 func main() {
@@ -25,6 +26,12 @@ func main() {
 	if err != nil {
 		log.Crit(err.Error())
 	}
+	dpa.Start()
+	defer dpa.Stop()
+	if !hello.Init(dpa) {
+		log.Crit("init fail")
+	}
+
 	buf := bytes.NewBufferString("foobar")
 	swg := &sync.WaitGroup{}
 	wwg := &sync.WaitGroup{}
@@ -32,8 +39,10 @@ func main() {
 	if err != nil {
 		log.Crit(err.Error())
 	}
-	if !hello.Init() {
-		log.Crit("init fail")
+	log.Debug("store", "key", key)
+
+	err = hello.Open(key)
+	if err != nil {
+		log.Crit("open fail", "err", err)
 	}
-	log.Debug("open", "result", hello.Open(key.String()))
 }
