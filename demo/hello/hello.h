@@ -11,5 +11,6 @@ typedef struct bzzFile{
 
 extern int bzzvfs_register();
 extern int bzzvfs_open(const char*);
+extern int bzzvfs_exec(int, const char*, int, char*);
 
 #endif //BZZVFS_H_

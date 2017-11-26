@@ -11,6 +11,19 @@
 
 sqlite3 *bzz_dbh;
 
+void lasterr(int l, char *s) {
+	int c;
+	const char *err;
+
+	err = sqlite3_errmsg(bzz_dbh);
+	if (strlen(err) < l) {
+		c = strlen(err);
+	} else {
+		c = l; 
+	}
+	strncpy(s, err, c);
+}
+
 int bzzClose(sqlite3_file *file) {
 	fprintf(stderr, "close!\n");
 	return SQLITE_OK;
@@ -64,12 +77,14 @@ int bzzFileSize(sqlite3_file *file, sqlite3_int64 *o_size) {
 
 int bzzLock(sqlite3_file *file, int l) {
 	fprintf(stderr, "lock!\n");
-	return SQLITE_IOERR_LOCK;
+	//return SQLITE_IOERR_LOCK;
+	return SQLITE_OK;
 }
 
 int bzzUnlock(sqlite3_file *file, int l) {
 	fprintf(stderr, "unlock!\n");
-	return SQLITE_IOERR_LOCK;
+	//return SQLITE_IOERR_LOCK;
+	return SQLITE_OK;
 }
 
 int bzzCheckReservedLock(sqlite3_file *file, int *o_res) {
@@ -78,7 +93,15 @@ int bzzCheckReservedLock(sqlite3_file *file, int *o_res) {
 }
 
 int bzzFileControl(sqlite3_file *file, int op, void *o_arg) {
-	fprintf(stderr, "fctrl %d!\n", op);
+	sqlite3_int64 *sz;
+	switch (op) {
+		case 18:
+		       	sz = (sqlite3_int64*)o_arg;
+			fprintf(stderr, "fctrl mmapsize (%d): %d!\n", op, *sz);
+			break;
+		default:
+			fprintf(stderr, "fctrl %d!\n", op);
+	}
 	return SQLITE_OK;
 }
 
@@ -164,7 +187,8 @@ int bzzDelete(sqlite3_vfs *vfs, const char *zName, int syncDir) {
 }
 
 int bzzAccess(sqlite3_vfs *vfs, const char *zName, int flags, int *pResOut) {
-	fprintf(stderr, "axx!\n");
+	fprintf(stderr, "axx %d!\n", flags);
+	*pResOut = SQLITE_OK;
 	return SQLITE_OK;
 }
 
@@ -272,3 +296,21 @@ int bzzvfs_register() {
 int bzzvfs_open(const char *name) {
 	return sqlite3_open_v2(name, &bzz_dbh, SQLITE_OPEN_READONLY, BZZVFS_ID);
 }
+
+int bzzvfs_exec(int sqlLen, const char *sql, int resLen, char *res) {
+	int r;
+	sqlite3_stmt *sth;
+	r = sqlite3_prepare(bzz_dbh, sql, sqlLen, &sth, NULL);
+	if (r != SQLITE_OK) {
+		lasterr(resLen, res);
+		return 1;
+	}
+	r = sqlite3_step(sth);
+	if (r != SQLITE_OK) {
+		lasterr(resLen, res);
+		return 1;
+	}
+	fprintf(stderr, "made it!\n");
+	return 0;
+}
+

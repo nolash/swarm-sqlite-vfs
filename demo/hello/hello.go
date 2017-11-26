@@ -2,6 +2,7 @@ package hello
 
 import (
 	"fmt"
+	"io"
 	"unsafe"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -24,8 +25,8 @@ var (
 )
 
 type chunkFile struct {
-	keys []*storage.Key
-	size int64
+	reader io.ReadSeeker
+	size   int64
 }
 
 //export GoBzzOpen
@@ -34,13 +35,13 @@ func GoBzzOpen(name *C.char, fd *C.int) C.int {
 	key := storage.Key(hash[:])
 	log.Debug("retrieve", "key", key, "name", name)
 	r := dpa.Retrieve(key)
-
 	sz, err := r.Size(nil)
 	if err != nil {
 		return 1
 	}
 	chunkfile := &chunkFile{
-		size: sz,
+		reader: r,
+		size:   sz,
 	}
 	chunkFiles = append(chunkFiles, chunkfile)
 	*fd = C.int(len(chunkFiles) - 1)
@@ -53,6 +54,7 @@ func GoBzzFileSize(c_fd C.int) C.longlong {
 	if !isValidFD(c) {
 		return -1
 	}
+	log.Debug(fmt.Sprintf("reporting filesize: %d", chunkFiles[c].size))
 	return C.longlong(chunkFiles[c].size)
 }
 
@@ -63,16 +65,20 @@ func GoBzzRead(c_fd C.int, p unsafe.Pointer, amount C.int, offset C.longlong) in
 		return -1
 	}
 	// mockdata
-	data := []byte("foobar")
+	file := chunkFiles[c]
+	file.reader.Seek(int64(offset), 0)
+	data := make([]byte, amount)
+	_, err := file.reader.Read(data)
+	if err != nil {
+		return -1
+	}
 	pp := (*[]byte)(p)
 	copy(*pp, data)
-	// fill rest of buffers with zeros if count mismatch
-	for i := len(data); i < int(amount); i++ {
-		(*pp) = append((*pp), 0x0)
-	}
+	log.Trace(fmt.Sprintf("returning data: '%x'...'%x'", data[:16], data[amount-16:amount]))
 	return int64(len(data))
 }
 
+// open database with using dpa
 func Open(key storage.Key) error {
 	bzzhash := C.CString(key.String())
 	defer C.free(unsafe.Pointer(bzzhash))
@@ -83,6 +89,21 @@ func Open(key storage.Key) error {
 	return nil
 }
 
+// execute query on database using dpa
+func Exec(sql string) error {
+	csql := C.CString(sql)
+	defer C.free(unsafe.Pointer(csql))
+	res := make([]byte, 1024)
+	cres := C.CString(string(res))
+	defer C.free(unsafe.Pointer(cres))
+	r := C.bzzvfs_exec(C.int(len(sql)), csql, 1024, cres)
+	if r != C.SQLITE_OK {
+		return fmt.Errorf("sqlite exec fail: %s", C.GoString(cres))
+	}
+	return nil
+}
+
+// register bzz vfs
 func Init(newdpa *storage.DPA) bool {
 	if C.bzzvfs_register() != C.SQLITE_OK {
 		return false
