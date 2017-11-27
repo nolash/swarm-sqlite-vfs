@@ -29,7 +29,7 @@ func main() {
 	if err != nil {
 		log.Crit(err.Error())
 	}
-	//defer os.RemoveAll(datadir)
+	defer os.RemoveAll(datadir)
 	log.Debug("datadir", "path", datadir)
 
 	// create a database and add some values

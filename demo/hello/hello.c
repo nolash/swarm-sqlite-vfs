@@ -299,18 +299,30 @@ int bzzvfs_open(const char *name) {
 
 int bzzvfs_exec(int sqlLen, const char *sql, int resLen, char *res) {
 	int r;
+	int i;
+
 	sqlite3_stmt *sth;
 	r = sqlite3_prepare(bzz_dbh, sql, sqlLen, &sth, NULL);
 	if (r != SQLITE_OK) {
 		lasterr(resLen, res);
-		return 1;
+		return r;
 	}
-	r = sqlite3_step(sth);
-	if (r != SQLITE_OK) {
-		lasterr(resLen, res);
-		return 1;
+
+	i = 0;
+	while ((r = sqlite3_step(sth)) != SQLITE_DONE) {
+		int id;
+		const char *val;
+
+		if (r != SQLITE_ROW) {
+			lasterr(resLen, res);
+			return r;
+		}
+
+		i++;
+		id = sqlite3_column_int(sth, 0);
+		val = sqlite3_column_text(sth, 1);
+		fprintf(stderr, ">>>> row %d: %d -> %s\n", i, id, val);
 	}
-	fprintf(stderr, "made it!\n");
 	return 0;
 }
 

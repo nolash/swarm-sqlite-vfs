@@ -3,6 +3,7 @@ package hello
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"unsafe"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -60,20 +61,30 @@ func GoBzzFileSize(c_fd C.int) C.longlong {
 
 //export GoBzzRead
 func GoBzzRead(c_fd C.int, p unsafe.Pointer, amount C.int, offset C.longlong) int64 {
+
+	// check if we have this reader
 	c := int(c_fd)
 	if !isValidFD(c) {
 		return -1
 	}
-	// mockdata
+
+	// seek and retrieve from dpa
 	file := chunkFiles[c]
 	file.reader.Seek(int64(offset), 0)
 	data := make([]byte, amount)
-	_, err := file.reader.Read(data)
-	if err != nil {
+	c, err := file.reader.Read(data)
+	if err != nil && err != io.EOF {
+		log.Warn("read error", "err", err, "read", c)
 		return -1
 	}
-	pp := (*[]byte)(p)
-	copy(*pp, data)
+
+	// not sure about this pointer handling, looks risky
+	var pp []byte
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&pp))
+	hdr.Len = int(amount)
+	hdr.Data = uintptr(p)
+	copy(pp, data[:amount])
+
 	log.Trace(fmt.Sprintf("returning data: '%x'...'%x'", data[:16], data[amount-16:amount]))
 	return int64(len(data))
 }
@@ -98,7 +109,7 @@ func Exec(sql string) error {
 	defer C.free(unsafe.Pointer(cres))
 	r := C.bzzvfs_exec(C.int(len(sql)), csql, 1024, cres)
 	if r != C.SQLITE_OK {
-		return fmt.Errorf("sqlite exec fail: %s", C.GoString(cres))
+		return fmt.Errorf("sqlite exec fail (%d): %s", r, C.GoString(cres))
 	}
 	return nil
 }
