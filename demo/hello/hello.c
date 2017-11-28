@@ -300,6 +300,7 @@ int bzzvfs_open(const char *name) {
 int bzzvfs_exec(int sqlLen, const char *sql, int resLen, char *res) {
 	int r;
 	int i;
+	char *clip;
 
 	sqlite3_stmt *sth;
 	r = sqlite3_prepare(bzz_dbh, sql, sqlLen, &sth, NULL);
@@ -308,10 +309,12 @@ int bzzvfs_exec(int sqlLen, const char *sql, int resLen, char *res) {
 		return r;
 	}
 
-	i = 0;
+	clip = malloc(sizeof(char) * 9);
+	i = 0;	
 	while ((r = sqlite3_step(sth)) != SQLITE_DONE) {
+
 		int id;
-		const char *val;
+		const void *val;
 
 		if (r != SQLITE_ROW) {
 			lasterr(resLen, res);
@@ -320,9 +323,11 @@ int bzzvfs_exec(int sqlLen, const char *sql, int resLen, char *res) {
 
 		i++;
 		id = sqlite3_column_int(sth, 0);
-		val = sqlite3_column_text(sth, 1);
-		fprintf(stderr, ">>>> row %d: %d -> %s\n", i, id, val);
+		val = sqlite3_column_blob(sth, 1);
+		sprintf(clip, "%08x", *(unsigned int*)val);
+		fprintf(stdout, ">>>> row %d: %d -> %s\n", i, id, clip);
 	}
+	free(clip);
 	return 0;
 }
 
