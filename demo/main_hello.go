@@ -3,12 +3,12 @@ package main
 import (
 	"crypto/rand"
 	"database/sql"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	sys "golang.org/x/sys/unix"
 
@@ -20,74 +20,135 @@ import (
 )
 
 const (
-	dbDriver  = "sqlite"
-	dataCount = 100
-	dataSize  = 1024 * 1024
+	SQL_DRIVER         = "sqlite" // if "sqlite3" is supplied, it fails complaining name is already taken. Conflict with cgo backend?
+	DEFAULT_DATACOUNT  = 100
+	DEFAULT_DATASIZE   = 1024
+	SQL_EXTRA_FACTOR   = 2.5 // allow for extra bytes of data per row for calculating disk size
+	CHUNK_EXTRA_FACTOR = 1.1
+	CHUNKDIR_NAME      = "chunks"
+	DB_NAME            = "hello.db"
 )
 
 var (
-	dbFile  = "hello.db"
-	diskReq = uint64(((dataSize + 16) * dataCount * 2) + (1024 * 1024)) // allowing 16 bytes pr row extra for sqlite (plenty) plus 1MB for leveldb stuff
+	dataDir   string
+	dataFile  string
+	newChunks bool
+	keep      bool
+	dataSize  uint64
+	dataCount uint64
+	dbSize    uint64
+	chunkDir  string
 )
 
-// If arg is a directory, a new database will be created in that directory
-// If arg is a file, it will be used as database file
-// If no arg, a new database will be created in the system tmp directory
+func init() {
+
+	// flags flags flags
+	flag.BoolVar(&keep, "k", false, "don't delete datadir after running")
+	flag.StringVar(&dataDir, "d", os.TempDir(), fmt.Sprintf("dir to use for datadir. (Default: '%s')", os.TempDir()))
+	flag.StringVar(&dataFile, "f", "", "existing db file to open (must exist, implies -k)")
+	flag.Uint64Var(&dataSize, "s", DEFAULT_DATASIZE, fmt.Sprintf("blob value size per row: (default %d)", DEFAULT_DATASIZE))
+	flag.Uint64Var(&dataCount, "c", DEFAULT_DATACOUNT, fmt.Sprintf("number of rows to generate (default: %d)", DEFAULT_DATACOUNT))
+	flag.BoolVar(&newChunks, "u", true, "if exists, replace chunkstore in datadir (default: true)")
+	var verbose bool
+	flag.BoolVar(&verbose, "v", false, "verbose debug output")
+	var veryverbose bool
+	flag.BoolVar(&veryverbose, "vv", false, "VERY verbose debug output")
+	var cverbose bool
+	flag.BoolVar(&cverbose, "vc", false, "include debug output from c backend")
+	flag.Parse()
+
+	// calculate capacities we need
+	disksize := uint64(float64(dataSize)) * dataCount
+	dbSize = uint64(float64(disksize) * 1.1 * SQL_EXTRA_FACTOR)
+
+	// chunk specifics
+	chunkDir = filepath.Join(dataDir, CHUNKDIR_NAME)
+
+	// debugging
+	loglevel := log.LvlInfo
+	if veryverbose {
+		loglevel = log.LvlTrace
+	} else if verbose {
+		loglevel = log.LvlDebug
+	}
+	log.Root().SetHandler(log.CallerFileHandler(log.LvlFilterHandler(loglevel, log.StreamHandler(os.Stderr, log.TerminalFormat(true)))))
+
+	if cverbose {
+		hello.Debug(true)
+	}
+}
+
 func main() {
 
 	var err error
 
-	log.Root().SetHandler(log.CallerFileHandler(log.LvlFilterHandler(log.LvlInfo, log.StreamHandler(os.Stderr, log.TerminalFormat(true)))))
-
 	// check if we have arg, and if it's file or dir
-	havedb := false
-	var stat sys.Statfs_t
-	var datadir string
+
 	var dataurl string
-	if len(os.Args) > 1 {
-		fi, err := os.Stat(os.Args[1])
+	var stat sys.Statfs_t
+	var actualdbsize int64
+	var diskreq uint64
+	checkavail := true
+	// if we are using existing db
+	if dataFile != "" {
+		// must exist
+		dataurl = filepath.Join(dataDir, dataFile)
+		fi, err := os.Stat(dataurl)
 		if err != nil {
 			log.Crit(err.Error())
 		}
-		if fi.IsDir() {
-			datadir, err = ioutil.TempDir(os.Args[1], "bzzvfs-hello")
-			if err != nil {
-				log.Crit(err.Error())
+		actualdbsize = fi.Size()
+		_, err = os.Stat(chunkDir)
+		if err == nil {
+			if newChunks {
+				os.RemoveAll(chunkDir)
+				checkavail = false
 			}
-			dataurl = filepath.Join(datadir, dbFile)
-			defer os.RemoveAll(datadir)
 		} else {
-			havedb = true
-			datadir = filepath.Dir(os.Args[1])
-			dataurl = os.Args[1]
-			defer os.RemoveAll(filepath.Join(datadir, "chunks"))
+			tmpdir, err := ioutil.TempDir(dataDir, fmt.Sprintf("swarmvfs-%dx%d-", dataCount, dataSize))
+			if err != nil {
+				log.Crit("failed to create datadir in '%s'", "err", err)
+			}
+			dataDir = tmpdir
+			req := float64(dbSize) * CHUNK_EXTRA_FACTOR
+			diskreq = uint64(req)
 		}
 	} else {
-		// create data dir
-		datadir, err = ioutil.TempDir("", "bzzvfs-hello")
+		_, err = os.Stat(filepath.Join(dataDir, DB_NAME))
+		if err == nil {
+			log.Crit("db file '%s' already exists", filepath.Join(dataDir, DB_NAME))
+		}
+		tmpdir, err := ioutil.TempDir(dataDir, fmt.Sprintf("swarmvfs-%dx%d-", dataCount, dataSize))
 		if err != nil {
-			log.Crit(err.Error())
+			log.Crit("failed to create datadir in '%s'", "err", err)
 		}
-		defer os.RemoveAll(datadir)
-		dataurl = filepath.Join(datadir, dbFile)
+		dataDir = tmpdir
+		dataurl = filepath.Join(dataDir, DB_NAME)
+		req := float64(dbSize) * (CHUNK_EXTRA_FACTOR * SQL_EXTRA_FACTOR)
+		diskreq = uint64(req)
+	}
+	if checkavail {
+		sys.Statfs(dataDir, &stat)
+		diskavail := stat.Bavail * uint64(stat.Bsize)
+		if diskavail < diskreq {
+			log.Crit("insufficient disk space", "have", diskavail, "need", diskreq)
+		}
 	}
 
-	// check for enough space if we're creating db
-	// we need enough for db AND chunks + a little more
-	if !havedb {
-		sys.Statfs(datadir, &stat)
-		diskfree := uint64(stat.Bsize) * uint64(stat.Bavail)
-		if diskfree < diskReq {
-			log.Crit("Not enough disk space", "datadir", datadir, "need", diskReq, "have", diskfree)
+	// don't delete it was an existing datafile
+	if !keep {
+		if dataFile != "" {
+			log.Warn("existing datafile specified, implying -k")
+		} else {
+			defer os.RemoveAll(dataDir)
 		}
 	}
 
-	log.Debug("paths", "datadir", datadir, "db url", dataurl)
-
-	if !havedb {
+	log.Debug("Hello!", "datadir", dataDir, "dbfile", dataFile, "keep", keep, "heuristic dbsize", dbSize)
+	if dataFile == "" {
 		// create a database and add some values
-		sql.Register(dbDriver, &sqlite3.SQLiteDriver{})
-		db, err := sql.Open(dbDriver, dataurl)
+		sql.Register(SQL_DRIVER, &sqlite3.SQLiteDriver{})
+		db, err := sql.Open(SQL_DRIVER, dataurl)
 		if err != nil {
 			log.Crit(err.Error())
 		}
@@ -100,12 +161,12 @@ func main() {
 			log.Crit(err.Error())
 		}
 
-		for i := 0; i < dataCount; i++ {
+		for i := uint64(0); i < dataCount; i++ {
 			data := make([]byte, dataSize)
 			c, err := rand.Read(data)
 			if err != nil {
 				log.Crit(err.Error())
-			} else if c < dataSize {
+			} else if uint64(c) < dataSize {
 				log.Crit("shortread")
 			}
 			_, err = db.Exec(`INSERT INTO hello (id, val) VALUES 
@@ -121,10 +182,18 @@ func main() {
 		if err != nil {
 			log.Crit(err.Error())
 		}
+		fi, err := os.Stat(dataurl)
+		if err != nil {
+			log.Crit(err.Error())
+		}
+		actualdbsize = fi.Size()
 	}
 
+	chunkcount := float64(actualdbsize/storage.CHUNKSIZE) * CHUNK_EXTRA_FACTOR
+	log.Debug("Data ok, passing on to swarm", "actual dbsize", actualdbsize, "chunkcount", uint64(chunkcount))
+
 	// create the chunkstore and start dpa on it
-	dpa, err := storage.NewLocalDPA(filepath.Join(datadir, "chunks"), "SHA3")
+	dpa, err := storage.NewLocalDPA(filepath.Join(dataDir, CHUNKDIR_NAME), "SHA3", uint64(chunkcount), 5000)
 	if err != nil {
 		log.Crit(err.Error())
 	}
@@ -150,10 +219,6 @@ func main() {
 		log.Crit(err.Error())
 	}
 	log.Debug("store", "key", key)
-
-	// sometimes the dpa in doesn't keep up in the C backend and retrieves 0x0-key,
-	// a small delay helps
-	time.Sleep(time.Millisecond * 250)
 
 	// test the sqlite_vfs bzz backend:
 

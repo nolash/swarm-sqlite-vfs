@@ -55,7 +55,7 @@ func GoBzzFileSize(c_fd C.int) C.longlong {
 	if !isValidFD(c) {
 		return -1
 	}
-	log.Debug(fmt.Sprintf("reporting filesize: %d", chunkFiles[c].size))
+	log.Trace(fmt.Sprintf("reporting filesize: %d", chunkFiles[c].size))
 	return C.longlong(chunkFiles[c].size)
 }
 
@@ -121,6 +121,14 @@ func Init(newdpa *storage.DPA) bool {
 	}
 	dpa = newdpa
 	return true
+}
+
+func Debug(active bool) {
+	if active {
+		C.bzzvfs_debug(1)
+		return
+	}
+	C.bzzvfs_debug(0)
 }
 
 func isValidFD(fd int) bool {

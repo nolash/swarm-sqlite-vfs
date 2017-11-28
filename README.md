@@ -20,6 +20,4 @@ The `demo/main_hello.c` file and its `Makefile` are only for separate testing of
 go run -v -ldflags "-L $GOPATH/pkg/linux_amd64" main_hello.go
 ```
 
-2. Sometimes the go callback gets passed a 0x0 chunk key even if the frontend file has a valid key. Just run it again. If it doesn't work add a small sleep somewhere :)
-
-3. 100 * 1M rows works ok, 512 * 1M rows yield problems with chunks not being found
+2. Sometimes the go callback gets passed a 0x0 chunk key even if the frontend file has a valid key. Happens more frequent on large dbs. Workaround is run with -k then run again with -d -f pointing to previously generated db.
