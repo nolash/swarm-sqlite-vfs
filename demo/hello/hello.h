@@ -10,8 +10,9 @@ typedef struct bzzFile{
 } bzzFile;
 
 extern int bzzvfs_register();
-extern int bzzvfs_open(const char*);
+extern int bzzvfs_open(char*);
 extern int bzzvfs_exec(int, const char*, int, char*);
 extern void bzzvfs_debug(int b);
+extern void bzzvfs_close();
 
 #endif //BZZVFS_H_

@@ -23,6 +23,7 @@ var (
 	vfs        *C.struct_sqlite3_vfs
 	chunkFiles []*chunkFile
 	dpa        *storage.DPA
+	debug      bool
 )
 
 type chunkFile struct {
@@ -32,12 +33,14 @@ type chunkFile struct {
 
 //export GoBzzOpen
 func GoBzzOpen(name *C.char, fd *C.int) C.int {
-	hash := common.HexToHash(C.GoString(name))
+	hex := C.GoStringN(name, 64) // must be specific, sqlite often mangles the 0 terminator
+	hash := common.HexToHash(hex)
 	key := storage.Key(hash[:])
-	log.Debug("retrieve", "key", key, "name", name)
+	log.Debug("retrieve", "key", key, "name", name, "hex", hex)
 	r := dpa.Retrieve(key)
 	sz, err := r.Size(nil)
 	if err != nil {
+		log.Error("dpa size query fail", "err", err)
 		return 1
 	}
 	chunkfile := &chunkFile{
@@ -91,11 +94,12 @@ func GoBzzRead(c_fd C.int, p unsafe.Pointer, amount C.int, offset C.longlong) in
 
 // open database with using dpa
 func Open(key storage.Key) error {
-	bzzhash := C.CString(key.String())
+	keystr := key.String()
+	bzzhash := C.CString(keystr)
 	defer C.free(unsafe.Pointer(bzzhash))
 	r := C.bzzvfs_open(bzzhash)
 	if r != C.SQLITE_OK {
-		fmt.Errorf("sqlite open fail")
+		return fmt.Errorf("sqlite open fail: %d", r)
 	}
 	return nil
 }
@@ -115,20 +119,26 @@ func Exec(sql string) error {
 }
 
 // register bzz vfs
-func Init(newdpa *storage.DPA) bool {
-	if C.bzzvfs_register() != C.SQLITE_OK {
-		return false
+func Init(newdpa *storage.DPA) error {
+	r := C.bzzvfs_register()
+	if r != C.SQLITE_OK {
+		fmt.Errorf("%d", r)
 	}
 	dpa = newdpa
-	return true
+	if debug {
+		C.bzzvfs_debug(1)
+	} else {
+		C.bzzvfs_debug(0)
+	}
+	return nil
+}
+
+func Close() {
+	C.bzzvfs_close()
 }
 
 func Debug(active bool) {
-	if active {
-		C.bzzvfs_debug(1)
-		return
-	}
-	C.bzzvfs_debug(0)
+	debug = active
 }
 
 func isValidFD(fd int) bool {

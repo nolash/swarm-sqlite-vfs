@@ -23,7 +23,7 @@ const (
 	SQL_DRIVER         = "sqlite" // if "sqlite3" is supplied, it fails complaining name is already taken. Conflict with cgo backend?
 	DEFAULT_DATACOUNT  = 100
 	DEFAULT_DATASIZE   = 1024
-	SQL_EXTRA_FACTOR   = 2.5 // allow for extra bytes of data per row for calculating disk size
+	SQL_EXTRA_FACTOR   = 1.5 // allow for extra bytes of data per row for calculating disk size
 	CHUNK_EXTRA_FACTOR = 1.1
 	CHUNKDIR_NAME      = "chunks"
 	DB_NAME            = "hello.db"
@@ -44,19 +44,25 @@ func init() {
 
 	// flags flags flags
 	flag.BoolVar(&keep, "k", false, "don't delete datadir after running")
-	flag.StringVar(&dataDir, "d", os.TempDir(), fmt.Sprintf("dir to use for datadir. (Default: '%s')", os.TempDir()))
-	flag.StringVar(&dataFile, "f", "", "existing db file to open (must exist, implies -k)")
-	flag.Uint64Var(&dataSize, "s", DEFAULT_DATASIZE, fmt.Sprintf("blob value size per row: (default %d)", DEFAULT_DATASIZE))
-	flag.Uint64Var(&dataCount, "c", DEFAULT_DATACOUNT, fmt.Sprintf("number of rows to generate (default: %d)", DEFAULT_DATACOUNT))
-	flag.BoolVar(&newChunks, "u", true, "if exists, replace chunkstore in datadir (default: true)")
+	flag.StringVar(&dataDir, "d", os.TempDir(), "dir to use for datadir")
+	flag.StringVar(&dataFile, "f", "", "existing db file to open (must exist, Implies -k)")
+	flag.Uint64Var(&dataSize, "s", DEFAULT_DATASIZE, "blob value size per row")
+	flag.Uint64Var(&dataCount, "c", DEFAULT_DATACOUNT, "number of rows to generate")
+	flag.BoolVar(&newChunks, "u", true, "if exists, replace chunkstore in datadir. Implies -d")
 	var verbose bool
 	flag.BoolVar(&verbose, "v", false, "verbose debug output")
 	var veryverbose bool
 	flag.BoolVar(&veryverbose, "vv", false, "VERY verbose debug output")
 	var cverbose bool
 	flag.BoolVar(&cverbose, "vc", false, "include debug output from c backend")
+	var help bool
+	flag.BoolVar(&help, "h", false, "show this usage information")
 	flag.Parse()
 
+	if help {
+		flag.Usage()
+		os.Exit(0)
+	}
 	// calculate capacities we need
 	disksize := uint64(float64(dataSize)) * dataCount
 	dbSize = uint64(float64(disksize) * 1.1 * SQL_EXTRA_FACTOR)
@@ -199,8 +205,10 @@ func main() {
 	}
 	dpa.Start()
 	defer dpa.Stop()
-	if !hello.Init(dpa) {
-		log.Crit("init fail")
+
+	err = hello.Init(dpa)
+	if err != nil {
+		log.Crit("init fail", "err", err)
 	}
 
 	// stick the database in the chunker, muahahaa

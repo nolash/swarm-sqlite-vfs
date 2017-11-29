@@ -268,6 +268,13 @@ const char* bzzNextSystemCall(sqlite3_vfs *vfs, const char *zName) {
 }
 
 int bzzvfs_register() {
+	int r;
+
+	r = sqlite3_initialize();
+	if (r != SQLITE_OK) {
+		return r;
+	}
+
 	static sqlite3_vfs bzzvfs = {
 		3,
 		sizeof(bzzFile),
@@ -297,12 +304,14 @@ int bzzvfs_register() {
 	return sqlite3_vfs_register(&bzzvfs, 0);
 }
 
-int bzzvfs_open(const char *name) {
+int bzzvfs_open(char *name) {
 	return sqlite3_open_v2(name, &bzz_dbh, SQLITE_OPEN_READONLY, BZZVFS_ID);
 }
 
-int bzzvfs_free() {
+void bzzvfs_close() {
 	fclose(fnull);
+	sqlite3_close_v2(bzz_dbh);
+	sqlite3_shutdown();
 }
 
 int bzzvfs_exec(int sqlLen, const char *sql, int resLen, char *res) {

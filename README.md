@@ -12,12 +12,14 @@ The demo does the following:
 
 The `demo/main_hello.c` file and its `Makefile` are only for separate testing of the `c` part and has no other relevance.
 
+## USAGE 
+
+There are command line args. Run with `-h` to see them
+
 ## ISSUES
 
-1. On my system I have to provide `$GOPATH` explicitly to the linker to find the right package library:
+1. On my system I sometimes have to provide `$GOPATH` explicitly to the linker to find the right package library:
 
 ```
 go run -v -ldflags "-L $GOPATH/pkg/linux_amd64" main_hello.go
 ```
-
-2. Sometimes the go callback gets passed a 0x0 chunk key even if the frontend file has a valid key. Happens more frequent on large dbs. Workaround is run with -k then run again with -d -f pointing to previously generated db.
